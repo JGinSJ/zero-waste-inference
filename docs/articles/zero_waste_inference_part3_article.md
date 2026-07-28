@@ -1,8 +1,10 @@
-# Zero-Waste Inference on Akamai Cloud — Phase 4
+# Zero-Waste Inference, Part 3 — What the GPU actually costs
 
-Benchmarking the GPU you actually have, not the one your planning doc wanted
+Benchmarking the hardware you have, not the one your planning doc wanted
 
-Up to this point in the series, the project has been about building reuse into the inference path: KV caching inside the model, prefix reuse and request deduplication in front of the model, and a separate Qwen image-serving path on Akamai LKE that treated the GPU stack like a real runtime instead of a decorative diagram [file:75][file:77][file:86]. But eventually every optimization project runs into a more practical question than “is this clever?” The question is: what does the system cost to run once the GPU is in the loop? [file:75][file:82]
+*Part 3 of three. This is Phase 4 in the [project repo](https://github.com/JGinSJ/zero-waste-inference) — Phase 3 is the Qwen image path, which is built and documented but sits outside this series. Repo phase numbers and series part numbers are not the same thing, and the article below refers to “Phase 4” whenever it means the repo’s work.*
+
+Up to this point in the series, the project has been about building reuse into the inference path: KV caching inside the model in Part 1, then an exact-match response cache at the front door and LMCache-backed prefix reuse behind it in Part 2 [file:75][file:77]. But eventually every optimization project runs into a more practical question than “is this clever?” The question is: what does the system cost to run once the GPU is in the loop? [file:75][file:82]
 
 That is what Phase 4 is for. The original plan was a multi-GPU benchmark and cost model comparing RTX 4000 Ada against RTX PRO 6000 Blackwell on Akamai Cloud, using a tensor-parallel vLLM deployment and a benchmark harness that could measure throughput and latency across GPU tiers [file:83][file:82]. What actually got built, however, was narrower and more honest: a single-GPU RTX 4000 Ada baseline benchmark on the hardware that was actually available, paired with a cost model that converts measured throughput into cost per token and cost per million tokens [file:75][file:82].
 
@@ -22,7 +24,7 @@ There is a temptation, especially in infrastructure-heavy projects, to treat “
 
 That is exactly the right framing. A reproducible benchmark on the GPU tier you actually ran tells you how concurrency affects throughput, how latency behaves under load, and what your output tokens really cost at a known hourly node price [file:82][file:75]. A future Blackwell comparison can still be added later, but it will be better because it will compare against a grounded Ada baseline instead of against wishful thinking [file:82][file:83].
 
-There is also a narrative reason this works well at the end of the series. The earlier phases all argued that reuse reduces waste. Phase 4 closes the loop by asking what that waste looks like in money and throughput terms once a real deployment is sitting on a billable GPU [file:75][file:77].
+There is also a narrative reason this works well at the end of the series. The earlier parts all argued that reuse reduces waste. This one closes the loop by asking what that waste looks like in money and throughput terms once a real deployment is sitting on a billable GPU [file:75][file:77].
 
 ## The benchmark harness that actually ran
 
@@ -94,4 +96,4 @@ By the end of Phase 4, the project has a measured single-GPU cost baseline on Ak
 
 That is a good ending for the series because it ties the architecture back to economics. Reuse is not interesting only because it is technically elegant. It is interesting because wasted inference work eventually appears as lower throughput, worse utilization, and more dollars spent per useful token [file:75][file:77][file:82].
 
-That closes the three-article public arc: Phase 1 explains the mechanism, Phase 2 proves cross-request reuse, and Phase 4 turns the result into a cost model [file:75][file:77][file:82].
+That closes the arc: Part 1 explains the mechanism, Part 2 proves cross-request reuse, and Part 3 turns the result into a cost model [file:75][file:77][file:82].

@@ -1,8 +1,10 @@
-# Zero-Waste Inference on Akamai Cloud — Phase 2
+# Zero-Waste Inference, Part 2 — Caching at the front door
 
-Moving prefix reuse to the edge with Fermyon, Valkey, and vLLM
+A Fermyon Wasm proxy, Valkey, and vLLM on Akamai LKE
 
-At the end of Phase 1, we had a nice clean answer to a local question: why should a model reuse previously computed attention state instead of recalculating it on every decode step? The answer, of course, was “because wasting compute is bad and the model does not need to rediscover its own past” [file:78][file:84].
+*Part 2 of three. This is Phase 2 in the [project repo](https://github.com/JGinSJ/zero-waste-inference).*
+
+At the end of Part 1, we had a nice clean answer to a local question: why should a model reuse previously computed attention state instead of recalculating it on every decode step? The answer, of course, was “because wasting compute is bad and the model does not need to rediscover its own past” [file:78][file:84].
 
 Now it’s time to make that idea less local and a lot more operational. In this phase, I wanted to move from reuse *within* a single request to reuse *across* requests by putting a lightweight edge layer in front of the model backend: a Fermyon Wasm Function at the front door, a Valkey cache in the middle, and vLLM on Akamai LKE behind it for the requests that still need GPU work [file:85][file:77][file:75].
 
@@ -94,4 +96,6 @@ By the end of Phase 2, the project has moved from an educational local demo into
 
 That means the project now demonstrates two different kinds of reuse. Phase 1 reused attention state within a generation. Phase 2 reuses useful work across requests, at the edge, before the GPU has to spend time on something it has effectively seen before [file:78][file:79][file:77].
 
-In the next phase, I’ll switch from text inference plumbing to the image path by deploying a Qwen-Image serving stack on Akamai LKE, with FastAPI, batching, and GPU-backed request routing [file:86][file:75]. The plumbing changes, the payload changes, and the implementation gets more multimodal, but the project thesis stays stubbornly the same: stop throwing away work that you already paid to compute [file:86][file:75].
+In Part 3, I’ll stop adding layers and start counting what they cost: a single-GPU benchmark on the RTX 4000 Ada node that was actually available, a sweep across concurrency levels, and a cost model that turns measured throughput into dollars per million output tokens [file:82][file:75]. It is the least glamorous part of the project and probably the most useful one, because it is where the argument stops being architectural and starts being financial [file:82][file:75].
+
+There is also a Phase 3 in the repo — a Qwen image-serving path on the same cluster. It runs, it is documented, and it is deliberately not part of this series: same story, different payload [file:86].

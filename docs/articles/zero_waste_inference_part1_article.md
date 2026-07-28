@@ -1,6 +1,8 @@
-# Zero-Waste Inference on Akamai Cloud — Phase 1
+# Zero-Waste Inference, Part 1 — Building the KV cache from scratch
 
-Building the KV cache from scratch so the savings stop feeling like magic
+So the savings stop feeling like magic
+
+*Part 1 of three, following the overview. This is Phase 1 in the [project repo](https://github.com/JGinSJ/zero-waste-inference); the repo runs its own phase numbering, which does not line up with the parts here.*
 
 In the overview article, I argued that inference is often more wasteful than it is mysterious. Now it’s time to start at the very bottom of that problem and build the first piece ourselves: the key-value cache inside a decoder-only transformer [file:75][file:84].
 
@@ -84,4 +86,4 @@ And then there is the question I asked early on: should this run on the Akamai L
 
 By the end of Phase 1, we have a runnable PyTorch demo that makes KV caching visible and measurable, a paired cached versus non-cached generation path, a correctness test suite, and a real timing result showing a 3.69× decode speedup on the dev machine for the measured run [file:78][file:84]. That is enough to establish the first and most local form of reuse in the project: don’t recompute attention history that the model already knows [file:84][file:78].
 
-In the next phase, I’m going to move up the stack from within-request reuse to across-request reuse. That means Fermyon Wasm Functions at the front door, Valkey as the cache layer, and a vLLM backend on Akamai LKE for the misses that still need GPU work [file:85][file:75]. The mechanism gets more distributed and the plumbing gets more interesting, but the logic stays the same: stop throwing away useful compute just because the request boundary changed [file:85][file:78].
+In Part 2, I’m going to move up the stack from within-request reuse to across-request reuse. That means Fermyon Wasm Functions at the front door, Valkey as the cache layer, and a vLLM backend on Akamai LKE for the misses that still need GPU work [file:85][file:75]. The mechanism gets more distributed and the plumbing gets more interesting, but the logic stays the same: stop throwing away useful compute just because the request boundary changed [file:85][file:78].
