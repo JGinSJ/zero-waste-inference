@@ -26,13 +26,18 @@ a line near the top mapping its part number to its repo phase; where an article
 discusses the repo's work it says "Phase N", and where it refers to the reading
 sequence it says "Part N".
 
-## Citation markers
+## Sources
 
-The drafts carry `[file:NN]` markers from the source-gathering pass. They are
-not Markdown links and will render literally — **strip them before publishing.**
-Rough mapping:
+The drafts used to carry `[file:NN]` citation markers from the source-gathering
+pass — 295 of them. **They were stripped on 2026-07-28**: they are not Markdown
+links and would have rendered literally on Medium. The drafts are now clean
+Markdown, ready to paste.
 
-| Marker | Source |
+The mapping is kept below as provenance — these are the repo documents each
+article was written and fact-checked against. Revisions with the markers still
+in place are recoverable from git history (`git log -p -- docs/articles/`).
+
+| Former marker | Source |
 |---|---|
 | `[file:75]` | root `README.md` |
 | `[file:77]` | `docs/architecture.md` |
