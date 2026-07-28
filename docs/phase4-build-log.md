@@ -101,7 +101,7 @@ caching on top of that would contaminate per-token cost measurements.
 
 ```
 tests/test_benchmark.py   27 passed
-tests/test_cost_model.py  40 passed
+tests/test_cost_model.py  30 passed
 ───────────────────────────────────
 total                     57 passed
 ```

@@ -1,5 +1,23 @@
 # Phase 4 — Multi-GPU Benchmarking and Cost Model
 
+> **This is the pre-implementation scope document — the plan, not the build.**
+> Phase 4 was rescoped to a single-GPU Ada baseline because the RTX PRO 6000
+> Blackwell node pool was not available at implementation time, and the
+> tensor-parallel target needs two GPUs on one node. For what actually ran, see
+> [`docs/phase4-build-log.md`](../phase4-build-log.md) and
+> [`phases/phase4-benchmarks/README.md`](../../phases/phase4-benchmarks/README.md).
+>
+> What changed:
+> - **The async SSE harness was not used.** The measured sweep ran on
+>   `benchmark/benchmark.py` — synchronous, `requests` +
+>   `ThreadPoolExecutor`, non-streaming `/v1/completions` only. `harness/load_gen.py`
+>   and `harness/run_benchmark.py` are retained but unexercised.
+> - **No TTFT or ITL** in the measured results — those need the SSE path.
+> - **Ada pricing is confirmed**, not PLACEHOLDER: `$0.96/hr` for
+>   `g2-gpu-rtx4000a1-l`. Blackwell pricing is still unknown.
+> - **The multi-GPU comparison is staged, not measured.** `k8s/vllm-tp.yaml` and
+>   `configs/rtxpro6000.yaml` remain in place for when the pool exists.
+
 ## Goal
 
 Produce a reproducible head-to-head throughput and cost comparison between
@@ -48,8 +66,12 @@ phases/phase4-benchmarks/
 │   └── generate_report.py    # Reads results/*.json → REPORT.md (no harness dep)
 ├── tests/
 │   ├── __init__.py
-│   └── test_cost_model.py    # 30 unit tests — cost arithmetic, CSV structure, edge cases
+│   ├── test_cost_model.py    # 30 unit tests — cost arithmetic, CSV structure, edge cases
+│   └── test_benchmark.py     # 27 unit tests — added with benchmark.py (57 total)
 └── results/                  # gitignored — generated outputs land here
+
+(As built, `benchmark/benchmark.py` was added alongside `harness/` and is what
+produced the measured results — see the note at the top of this file.)
 ```
 
 ## What the benchmark measures
@@ -66,14 +88,15 @@ phases/phase4-benchmarks/
 | Decision | Resolution |
 |---|---|
 | Cost model methodology | All three metrics: cost/token, cost/request, cost/million-tokens; all derived from a single `gpu_hourly_usd` input |
-| GPU pricing source | PLACEHOLDER in both config files — must be filled in from Akamai published pricing before running the cost model |
+| GPU pricing source | Ada **confirmed at `$0.96/hr`** (`g2-gpu-rtx4000a1-l`, as of 2026-04) and set in `configs/rtx4000ada.yaml`. Blackwell remains PLACEHOLDER in `configs/rtxpro6000.yaml` — fill in from Akamai published pricing before running that cost model |
 | Tensor-parallel strategy | Documented in `phases/phase4-benchmarks/README.md`; decision table defers GPU-specific cells to measured results |
 | Concurrency levels | Ada: 1, 4, 8, 16; Blackwell: 1, 4, 8, 16, 32 |
 
 ## Open questions
 
-> TODO: Confirm Akamai GPU node hourly pricing for both GPU types and update
-> `gpu_hourly_usd` in `configs/rtx4000ada.yaml` and `configs/rtxpro6000.yaml`.
+> ~~TODO: Confirm Akamai GPU node hourly pricing for both GPU types~~ —
+> **Ada resolved:** `$0.96/hr`, set in `configs/rtx4000ada.yaml`. Blackwell
+> pricing is still outstanding in `configs/rtxpro6000.yaml`.
 
 > TODO: Confirm Akamai LKE node pool label names for nodeSelector in
 > `k8s/vllm-tp.yaml` and both benchmark Job manifests.
@@ -87,7 +110,7 @@ phases/phase4-benchmarks/
 
 ## Success criteria
 
-- [ ] `python -m pytest tests/ -v` passes (30 tests, no GPU required).
+- [x] `python -m pytest tests/ -v` passes (57 tests as built — 27 benchmark + 30 cost-model, no GPU required).
 - [ ] `run_benchmark.py` completes on both GPU targets without error.
 - [ ] CSVs contain non-zero cost figures (requires `gpu_hourly_usd` set).
 - [ ] `generate_report.py` produces a valid `REPORT.md` from results.

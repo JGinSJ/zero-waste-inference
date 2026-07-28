@@ -90,9 +90,15 @@ kubectl describe node lke591117-868011-4171fee90000 | grep -A2 Taints
 
 ### 2d. Apply Fermyon deployment rename
 
-Renames the live Deployment from `fermyon-proxy` to `fermyon-prefix-cache` to
-match all other project references. Run once; after this the old Deployment no
-longer exists in the cluster.
+**One-time migration — skip if already applied.** Renames the live Deployment
+from `fermyon-proxy` to `fermyon-prefix-cache` to match the manifest, which now
+uses `fermyon-prefix-cache` throughout (Deployment, labels, selector, container,
+Service selector). Once done, the old Deployment no longer exists and the
+`delete` below is a harmless no-op. Check first:
+
+```bash
+kubectl get deployment -n inference | grep fermyon
+```
 
 ```bash
 kubectl apply -f phases/phase2-prefix-cache/fermyon/k8s/fermyon-deployment.yaml

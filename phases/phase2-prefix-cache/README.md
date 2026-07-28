@@ -59,7 +59,7 @@ Request
   │
   ▼
 Fermyon Wasm Function          ← Layer 1: response cache (Valkey)
-  │  hash(prompt[:N])
+  │  hash(model + messages)
   │  GET from Valkey
   ├── HIT  ──────────────────────► return cached response  (0 GPU work)
   │
@@ -74,28 +74,45 @@ Fermyon Wasm Function          ← Layer 1: response cache (Valkey)
                                      └── store in Valkey ──► return to client
 ```
 
-**Layer 1 (Valkey):** Full response cache.  If the same (or same-prefix)
-prompt was seen before, return the cached answer immediately — no GPU
-compute at all.
+**Layer 1 (Fermyon → Valkey):** Full response cache, **exact match**.  If the
+identical `(model, messages)` pair was seen before, return the stored answer
+immediately — no GPU compute at all.  This layer does *not* match on shared
+prefixes; see the key derivation below.
 
-**Layer 2 (vLLM):** KV-state cache on the GPU.  For cache misses that share
-a prompt prefix (e.g. a system prompt), vLLM reuses the already-computed
-attention key/value states for the shared prefix, reducing the prefill cost.
-This is the same mechanism demonstrated from scratch in Phase 1.
+**Layer 2 (vLLM → LMCache → Valkey):** KV-state cache.  For cache misses that
+share a prompt prefix (e.g. a system prompt), the already-computed attention
+key/value states for the shared prefix are reused, reducing prefill cost.  This
+is the same mechanism demonstrated from scratch in Phase 1.  Note that vLLM's
+*built-in* prefix cache is switched off (`--no-enable-prefix-caching`) because
+LMCache manages this externally and the two do not stack.
 
 ### Cache key derivation
 
-The Valkey key for a prompt is:
+The Valkey key written by the Fermyon proxy is:
 
 ```
-SHA-256( prompt[:prefix_chars].encode("utf-8") ).hexdigest()
+"fermyon:v1:" + hex( SHA-256( model + "\0" + messages_json ) )
 ```
 
-`prefix_chars` defaults to 128 Unicode characters (not bytes).  Two prompts
-that share the same first 128 characters share a cache entry.
+75 characters total (`fermyon:v1:` + a 64-char hex digest).  `messages` is
+normalised to `[{role, content}]` first, so field order and extra fields
+(`name`, `tool_call_id`, …) do not change the key.
 
-This is **exact-match** prefix caching.  See [Future work](#future-work) for
-the semantic caching path.
+Only `model` and `messages` contribute.  Sampling parameters — `temperature`,
+`top_p`, `max_tokens`, `stream` — are deliberately excluded, so requests with
+identical prompt content share an entry even when their sampling knobs differ.
+
+**This is an exact-match response cache, not a prefix cache.**  The digest
+covers the whole message array: two requests that share a long opening but
+diverge by a single token at the end produce different keys and do not share an
+entry.  Prefix-level reuse happens one layer down, in LMCache.  See
+[Future work](#future-work) for the semantic caching path.
+
+Entries are written with a TTL (`SPIN_VARIABLE_CACHE_TTL`, default 3600 s),
+applied via `EXPIRE` on write.  The TTL is **not** reset on hits — it counts
+down from first write.  Both the `SET` and the `EXPIRE` are best-effort: a
+failure never fails the client request, it just means the next identical
+request is another miss.
 
 ---
 
@@ -103,9 +120,9 @@ the semantic caching path.
 
 | Component | Technology | Where it runs |
 |---|---|---|
-| Front door | Fermyon Wasm (Rust) | Fermyon Cloud or self-hosted Spin |
+| Front door | Fermyon Wasm (Rust, Spin 3.6.3) | Akamai LKE (CPU node, `workload-type=cpu`) |
 | Response cache | Valkey 8.0 standalone | Akamai LKE (CPU node) |
-| Inference backend | vLLM with prefix caching | Akamai LKE (GPU node) |
+| Inference backend | vLLM 0.18.1 + LMCache 0.4.3 (`LMCacheConnectorV1`) | Akamai LKE (GPU node, `gpu-type=rtx4000ada`) |
 
 ---
 
@@ -114,10 +131,16 @@ the semantic caching path.
 ```
 phase2-prefix-cache/
 ├── fermyon/
-│   ├── Cargo.toml          # Rust crate — spin-sdk 3, sha2, serde
-│   ├── spin.toml           # Fermyon app manifest
-│   └── src/
-│       └── lib.rs          # Async HTTP handler: hash → Valkey → vLLM
+│   ├── Cargo.toml          # workspace root — no [package]
+│   ├── spin.toml           # Spin app manifest — one trigger per component
+│   ├── Dockerfile          # debian:bookworm-slim + pinned Spin v3.6.3
+│   ├── proxy/
+│   │   └── src/lib.rs      # POST /v1/chat/completions — hash → Valkey → vLLM
+│   ├── health/
+│   │   └── src/lib.rs      # GET /health — no outbound hosts
+│   ├── src/lib.rs          # legacy single-crate handler (superseded, unused)
+│   └── k8s/
+│       └── fermyon-deployment.yaml   # Namespace + ConfigMap + Deployment + Service
 ├── valkey/
 │   ├── valkey.yaml         # LKE Deployment + Service + ConfigMap
 │   └── config/
@@ -134,7 +157,8 @@ phase2-prefix-cache/
 │   ├── load_gen.py         # Send N requests with configurable prefix-share rate (broken against live endpoint — see note below)
 │   └── report.py           # Hit rate + latency report from load_gen output (broken against live endpoint — see note below)
 └── tests/
-    └── test_prefix_hash.py # Hash algorithm contract tests + semantic-cache stub
+    ├── test_prefix_hash.py # Legacy hash contract tests + semantic-cache stub (14 pass, 1 skipped)
+    └── test_chat_cache.py  # Live cache-key contract (21 unit + 4 integration stubs)
 ```
 
 ---
@@ -161,22 +185,32 @@ Install Spin CLI: follow [developer.fermyon.com](https://developer.fermyon.com/s
 
 ```bash
 cd phases/phase2-prefix-cache/fermyon
-cargo build --target wasm32-wasip1 --release
+cargo build --workspace --target wasm32-wasip1 --release
 ```
 
-The binary is written to
-`fermyon/target/wasm32-wasip1/release/prefix_cache_handler.wasm`.
+Two binaries are written to the workspace-level `target/`:
+
+```
+target/wasm32-wasip1/release/proxy.wasm
+target/wasm32-wasip1/release/health.wasm
+```
+
+`--workspace` matters — building without it misses one of the two components,
+and the paths above must match the `source =` values in `spin.toml`.
 
 ### Run locally with Spin
 
 ```bash
 cd phases/phase2-prefix-cache/fermyon
-spin up \
+spin up --listen 0.0.0.0:8082 \
   --variable valkey_address=redis://localhost:6379 \
-  --variable vllm_url=http://localhost:8000
+  --variable vllm_url=http://localhost:8000 \
+  --variable cache_ttl=3600
 ```
 
-The handler listens on `http://localhost:3000/v1/completions`.
+The proxy listens on `http://localhost:8082/v1/chat/completions`, with the
+health component on `/health`.  The listen address is a **runtime flag** in
+Spin 3.x — it is not a `spin.toml` field.
 
 ### Deploy to LKE
 
@@ -197,12 +231,26 @@ kubectl apply -f phases/phase2-prefix-cache/vllm/pvc-model-cache.yaml
 # Deploy vLLM with LMCache connector
 kubectl apply -f phases/phase2-prefix-cache/vllm/vllm.yaml
 
-# Deploy Fermyon app to Fermyon Cloud (or use `spin up` pointed at LKE services)
+# Build and push the Fermyon image, then deploy it to the CPU node.
+# (The front door runs as a container on LKE — not on Fermyon Cloud.)
 cd phases/phase2-prefix-cache/fermyon
-spin deploy \
-  --variable valkey_address=redis://valkey-svc.inference:6379 \
-  --variable vllm_url=http://vllm-svc.inference:8000
+cargo build --workspace --target wasm32-wasip1 --release
+docker build -t ghcr.io/jginsj/fermyon-prefix-cache:latest -f Dockerfile .
+docker push ghcr.io/jginsj/fermyon-prefix-cache:latest
+
+# The CPU node must carry the workload-type label before the pod can schedule
+kubectl label node <cpu-node-name> workload-type=cpu --overwrite
+
+kubectl apply -f k8s/fermyon-deployment.yaml
 ```
+
+> **GHCR visibility:** new packages default to **private**, and the nodes have
+> no registry credentials — the pull will fail until the package is set to
+> public in the GitHub UI (Settings → Packages → Change visibility).
+
+Runtime configuration comes from the `fermyon-config` ConfigMap, which Spin
+reads as `SPIN_VARIABLE_*` environment variables: `VALKEY_ADDRESS`,
+`VLLM_URL`, `CACHE_TTL`.
 
 **Before deploying vLLM:** `MODEL_NAME` and `nodeSelector` are pre-configured
 in `vllm/vllm.yaml` for the us-ord cluster. Verify before applying to a
@@ -214,23 +262,35 @@ different cluster:
 
 ## Request / response format
 
-**Request:**
-```json
-POST /v1/completions
-{"prompt": "You are a helpful assistant. What is 2+2?"}
-```
+The proxy is an OpenAI-compatible **transparent passthrough**.  It speaks the
+same request and response shape as vLLM; the only additions are two response
+headers.
 
-**Response:**
+**Request** — standard chat completions:
 ```json
+POST /v1/chat/completions
 {
-  "response": "<model output or cached response>",
-  "cache_hit": true,
-  "latency_ms": 4
+  "model": "mistralai/Mistral-7B-Instruct-v0.2",
+  "messages": [{"role": "user", "content": "What is 2+2?"}],
+  "max_tokens": 64
 }
 ```
 
-`cache_hit: true` means the response was served from Valkey without
-touching the GPU.
+Unknown fields are preserved and forwarded to vLLM unchanged.  `stream: true`
+is the exception: it is stripped before forwarding (the Wasm runtime cannot do
+streaming responses) and the event is logged to stderr.
+
+**Response** — the raw vLLM JSON body, unmodified, plus:
+
+```
+Content-Type: application/json
+X-Cache: HIT | MISS
+```
+
+`X-Cache: HIT` means the body came from Valkey without touching the GPU.
+There is no `cache_hit` field in the body — cache state travels in the header,
+which is why `benchmark/load_gen.py` and `report.py` no longer work against
+the live endpoint (see [Known issues](#known-issues)).
 
 ---
 
@@ -270,9 +330,16 @@ Fermyon misses cost slightly more than direct vLLM. The break-even hit rate of
 1.3% means the cache layer produces net-positive latency impact at any realistic
 hit rate above that floor.
 
-The 25.9% external prefix cache hit rate confirmed in vLLM metrics (verified
-2026-04-15) is well above the 1.3% break-even. The cache is operating in a
-strongly net-positive regime.
+**What the break-even does not tell you.** It says the Fermyon layer pays for
+itself at almost any realistic repeat rate. It does not say what that repeat
+rate is — the Fermyon hit rate was never measured under production-shaped
+traffic, only in Pass 2 above, which was constructed to hit.
+
+The 25.9% figure recorded in `results/phase2_valkey_verified.json` is **not**
+this layer's hit rate: it belongs to LMCache's external KV cache, measured
+against vLLM directly on 2026-04-15, before the Fermyon front door was wired to
+that instance. Two different caches, two different runs — do not compare it
+against the 1.3% break-even above.
 
 ### Running the benchmark
 
@@ -289,22 +356,35 @@ python benchmark/bench_cache.py \
 
 ## Running the tests
 
-The prefix-hash tests require no running infrastructure.
+Neither test file requires running infrastructure.
 
 ```bash
 cd phases/phase2-prefix-cache
 python -m pytest tests/ -v
+# 35 passed, 1 skipped, 4 deselected
 ```
 
-Tests cover:
-- Key format: 64-character lowercase hex string
-- Determinism: same prompt → same key, always
-- Prefix truncation: `prefix_chars` controls the cache granularity
-- Same-prefix/different-suffix → same cache key
-- UTF-8 correctness: characters (not bytes) are counted
+**`test_chat_cache.py`** — the contract for the key the live proxy actually
+writes (21 unit tests, plus 4 integration stubs deselected by default):
+- Key format: `fermyon:v1:` + 64-char lowercase hex, 75 characters total
+- Determinism: same `(model, messages)` → same key, always
+- Sampling params (`temperature`, `top_p`, `max_tokens`, `stream`) excluded
+- Field-order independence after message normalisation
+- Null-byte separator prevents `(model, messages)` boundary collisions
 - Pinned SHA-256 values as a cross-language compatibility check
-- `test_semantic_cache_equivalent_prompts_share_key` — **skipped**, marks
-  the semantic caching work as not yet implemented
+
+**`test_prefix_hash.py`** — contract tests for the earlier `prompt[:128]`
+scheme (14 pass, 1 skipped). That scheme is **superseded** by the key above and
+is retained only for the semantic-cache stub,
+`test_semantic_cache_equivalent_prompts_share_key`, which is skipped and marks
+the semantic caching work as not yet implemented.
+
+The 4 integration tests need a live endpoint:
+
+```bash
+kubectl port-forward svc/fermyon-svc 8082:8082 -n inference &
+FERMYON_URL=http://localhost:8082 python -m pytest tests/test_chat_cache.py -v -m integration
+```
 
 ---
 
@@ -312,9 +392,9 @@ Tests cover:
 
 ### Semantic caching (TODO)
 
-The current implementation is **exact-match**: two prompts share a cache
-entry only if their first `prefix_chars` characters are byte-for-byte
-identical.
+The current implementation is **exact-match**: two requests share a cache entry
+only if their `(model, messages)` pair is byte-for-byte identical after
+normalisation.
 
 A future implementation would:
 1. Embed the prompt prefix with a sentence-transformer model.
@@ -333,7 +413,10 @@ Tracking: `tests/test_prefix_hash.py::test_semantic_cache_equivalent_prompts_sha
 
 - Valkey cluster mode for horizontal scale and HA
 - TLS between Fermyon and Valkey
-- Cache TTL / expiry policy (currently entries live until LRU eviction)
+- Streaming responses (blocked on Wasm runtime support — `stream: true` is
+  currently stripped)
+- Sliding-window TTL — entries currently expire a fixed 3600 s after first
+  write and are not refreshed on hits
 - CI/CD pipeline for Wasm build and LKE deploy
 - `kubectl` wait / health-check scripts for the deploy sequence
 
@@ -350,13 +433,16 @@ header. Use `bench_cache.py` for all live-cluster measurements.
 
 ## Success criteria
 
-- [ ] `cargo build --target wasm32-wasip1 --release` succeeds.
-- [ ] `spin up` starts the handler locally with mocked Valkey/vLLM.
-- [ ] Valkey pod is healthy in LKE (`kubectl get pods -n inference`).
+- [x] `cargo build --workspace --target wasm32-wasip1 --release` succeeds.
+- [x] Valkey pod is healthy in LKE (`kubectl get pods -n inference`).
 - [x] vLLM pod starts with LMCacheConnectorV1 and Valkey backend confirmed in logs.
 - [x] Valkey store/retrieve verified: 256/256 tokens, 3.70 ms store, 1.56 ms retrieve.
-- [x] External prefix cache hit rate: 25.9% confirmed in vLLM metrics.
-- [ ] `python -m pytest tests/ -v` passes (excluding skipped semantic test).
-- [ ] Load generator produces requests with a 50 % shared-prefix rate.
-- [ ] `report.py` shows Valkey hit rate ≥ 40 % under that load.
-- [ ] Cached requests show lower median latency than uncached requests.
+- [x] LMCache external KV hit rate: 25.9% confirmed in vLLM metrics (this is
+      Layer 2, measured direct-to-vLLM — not the Fermyon response cache).
+- [x] `python -m pytest tests/ -v` passes — 35 passed, 1 skipped (semantic stub).
+- [x] Cached requests show lower median latency than uncached: 218 ms vs 3,020 ms p50.
+- [ ] Fermyon-layer hit rate measured under production-shaped traffic.
+- [ ] ~~Load generator produces requests with a 50 % shared-prefix rate.~~ —
+      blocked: `load_gen.py` / `report.py` read a `cache_hit` body field the
+      live handler does not emit. See [Known issues](#known-issues).
+- [ ] Streaming responses supported end to end.

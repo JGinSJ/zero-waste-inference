@@ -2,12 +2,18 @@
 # -------------------------------------------------------
 # Run with:
 #   python -m harness.run_benchmark --config configs/rtx4000ada.yaml
+#
+# NOTE: this config drives the async harness (harness/run_benchmark.py), which
+# is retained but was NOT used for the measured Phase 4 results.  Those came
+# from benchmark/benchmark.py, which takes its parameters as CLI flags and
+# reads nothing from this file.  See docs/phase4-build-log.md.
 
 # Human-readable label embedded in all output files and reports.
 gpu_label: "RTX 4000 Ada"
 
 # HuggingFace model ID. Must match the --model flag passed to vLLM.
-model: "Qwen/Qwen2.5-VL-7B-Instruct"
+# Matches the model actually served on the Ada node for the measured sweep.
+model: "mistralai/Mistral-7B-Instruct-v0.2"
 
 # vLLM endpoint. Override at runtime or edit before deploying.
 # TODO: Replace with the actual Akamai LKE service address or LoadBalancer IP.

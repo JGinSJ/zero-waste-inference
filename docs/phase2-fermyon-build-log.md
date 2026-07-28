@@ -119,7 +119,7 @@ The `.wasm` source paths inside the image mirror `spin.toml`'s `source =` values
 
 - **Namespace** `inference`
 - **ConfigMap** `fermyon-config`: injects `SPIN_VARIABLE_VALKEY_ADDRESS`, `SPIN_VARIABLE_VLLM_URL`, `SPIN_VARIABLE_CACHE_TTL` as environment variables
-- **Deployment** `fermyon-proxy`: image `ghcr.io/jginsj/fermyon-prefix-cache:latest`, `nodeSelector: workload-type=cpu`, resource requests 50m CPU / 64Mi memory, limits 500m / 256Mi, readiness and liveness probes on `GET /health:8082`
+- **Deployment** `fermyon-prefix-cache`: image `ghcr.io/jginsj/fermyon-prefix-cache:latest`, `nodeSelector: workload-type=cpu`, resource requests 50m CPU / 64Mi memory, limits 500m / 256Mi, readiness and liveness probes on `GET /health:8082`
 - **Service** `fermyon-svc`: ClusterIP, port 8082
 
 ### Tests
@@ -232,9 +232,11 @@ This survives node pool recreation as long as the label is reapplied, which is a
 
 ---
 
-### Deployment named fermyon-proxy (not fermyon-prefix-cache)
+### Deployment naming — RESOLVED
 
-The Kubernetes Deployment is named `fermyon-proxy` in the manifest, while the Docker image is `fermyon-prefix-cache` and the Spin application is `prefix-cache-handler`. These names are inconsistent. The Deployment name was chosen to be shorter and more descriptive of the runtime role (proxy), while the image name reflects what it contains. This inconsistency should be resolved in a future cleanup pass — either rename the Deployment to `fermyon-prefix-cache` or rename the image to `fermyon-proxy` for consistency.
+The Kubernetes Deployment was originally named `fermyon-proxy` in the manifest, while the Docker image was `fermyon-prefix-cache` and the Spin application was `prefix-cache-handler`. That inconsistency was flagged here for a future cleanup pass.
+
+**Resolved since.** The Deployment, its labels, its `matchLabels` selector, the container name, and the Service selector all read `fermyon-prefix-cache` now, matching the image — see `fermyon/k8s/fermyon-deployment.yaml`. The only remaining discrepancy is the Spin component, still named `prefix-cache-handler` inside `spin.toml`; it is internal to the Wasm application and does not appear in any Kubernetes object.
 
 ---
 
@@ -304,7 +306,7 @@ a strongly net-positive regime.
 ### Pod
 
 ```
-kubectl get pods -n inference -l app=fermyon-proxy
+kubectl get pods -n inference -l app=fermyon-prefix-cache
 ```
 
 The pod is scheduled on the CPU node pool node carrying `workload-type=cpu`. The GPU node carries `gpu-type=rtx4000ada` and is not eligible for this workload.

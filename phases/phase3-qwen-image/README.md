@@ -270,15 +270,17 @@ python benchmark/report.py \
   padding variable-length vision tokens to a common sequence length — a TODO.
 
 - **Phase 2 integration:** Image+prompt responses could be cached in Valkey
-  (Phase 2 pipeline) using the same SHA-256 prefix scheme, eliminating
-  redundant GPU calls for repeated queries.  No code changes to Phase 2
-  are needed; the Phase 3 server would sit behind the Fermyon handler as
-  an additional `vllm_url`-equivalent backend.
+  (Phase 2 pipeline) using the same exact-match key scheme —
+  `SHA-256(model + "\0" + normalised messages)` over the whole message array,
+  not a prompt-prefix hash — eliminating redundant GPU calls for repeated
+  queries.  No code changes to Phase 2 are needed; the Phase 3 server would sit
+  behind the Fermyon handler as an additional `vllm_url`-equivalent backend.
 
 - **vLLM multimodal mode:** An alternative to raw `transformers` is
-  `vllm.entrypoints.openai.api_server` with `--enable-prefix-caching`
-  and a multimodal model.  This would unify Phases 2 and 3 under a single
-  vLLM deployment.
+  `vllm serve` with a multimodal model, which would unify Phases 2 and 3 under
+  a single vLLM deployment.  Note that the Phase 2 deployment gets prefix reuse
+  from LMCache with `--no-enable-prefix-caching`; a unified deployment would
+  need to pick one mechanism, since the two do not stack.
 
 ---
 

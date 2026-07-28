@@ -86,9 +86,10 @@ See [docs/phases/phase1-kv-cache.md](docs/phases/phase1-kv-cache.md).
 
 ### Phase 2 — Fermyon + Valkey + vLLM Prefix Caching
 
-A Fermyon Wasm Function sits at the front door. It hashes prompt prefixes,
-checks a Valkey cache, and short-circuits requests that share a prefix.
-Misses fall through to a vLLM backend with prefix caching enabled.
+A Fermyon Wasm Function sits at the front door. It hashes the request's model
+and messages, checks a Valkey cache, and short-circuits exact repeats before
+they reach the GPU. Misses fall through to a vLLM backend where LMCache
+handles prefix reuse, offloading KV blocks to the same Valkey instance.
 
 See [docs/phases/phase2-fermyon-valkey.md](docs/phases/phase2-fermyon-valkey.md).
 

@@ -50,10 +50,11 @@
 //! # Streaming limitation
 //!
 //! The Fermyon Wasm runtime does not support streaming HTTP responses.
-//! If `stream: true` is present in the request it is **silently stripped**
-//! before the upstream vLLM call; the complete response is returned as a
-//! single JSON body.  Clients relying on SSE / chunked-transfer will not
-//! receive tokens incrementally.  This is a known Phase 2 limitation.
+//! If `stream: true` is present in the request it is **stripped** before the
+//! upstream vLLM call — and the event is logged to stderr, not swallowed;
+//! the complete response is returned as a single JSON body.  Clients relying
+//! on SSE / chunked-transfer will not receive tokens incrementally.  This is
+//! a known Phase 2 limitation.
 //!
 //! # TTL
 //!
