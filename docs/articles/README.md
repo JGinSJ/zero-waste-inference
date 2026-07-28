@@ -6,7 +6,7 @@ an overview plus three parts.
 
 | Series | File | Repo phase | Title |
 |---|---|---|---|
-| Overview | *(not in repo — unpublished)* | — | Zero-Waste Inference on Akamai Cloud |
+| Overview | [`zero_waste_inference_overview_article.md`](zero_waste_inference_overview_article.md) | — (spans all four) | Zero-Waste Inference on Akamai Cloud |
 | Part 1 | [`zero_waste_inference_part1_article.md`](zero_waste_inference_part1_article.md) | Phase 1 | Building the KV cache from scratch |
 | Part 2 | [`zero_waste_inference_part2_article.md`](zero_waste_inference_part2_article.md) | Phase 2 | Caching at the front door |
 | Part 3 | [`zero_waste_inference_part3_article.md`](zero_waste_inference_part3_article.md) | Phase 4 | What the GPU actually costs |
