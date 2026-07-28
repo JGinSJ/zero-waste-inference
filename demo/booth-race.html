@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zero-Waste Inference — the race</title>
+<style>
+/* ------------------------------------------------------------------ *
+ * Palette: dataviz reference instance, dark surface only.
+ * This is a booth display under bright hall lighting — it deliberately
+ * commits to one look rather than following the viewer's theme.
+ *
+ * Series slots 1 and 2 (blue / orange), validated for the dark surface:
+ *   worst-pair CVD dE 26.8 (protan), normal-vision dE 31.8, both >= 3:1.
+ * Orange also happens to read as heat, which is what the GPU lane is.
+ * ------------------------------------------------------------------ */
+:root {
+  color-scheme: dark;
+  --page:        #0d0d0d;
+  --surface:     #1a1a19;
+  --ink:         #ffffff;
+  --ink-2:       #c3c2b7;
+  --muted:       #898781;
+  --grid:        #2c2c2a;
+  --baseline:    #383835;
+  --border:      rgba(255,255,255,0.10);
+
+  --cached:      #3987e5;   /* categorical slot 1 */
+  --direct:      #d95926;   /* categorical slot 2 */
+  --good:        #0ca30c;   /* status: good */
+
+  --gap: clamp(10px, 1.4vh, 20px);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--page);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+
+.stage {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: clamp(16px, 2.2vh, 34px) clamp(20px, 2.6vw, 56px);
+}
+
+/* ---------------- header ---------------- */
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.brand {
+  font-size: clamp(15px, 1.7vh, 24px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+.brand span { color: var(--muted); font-weight: 400; }
+
+.mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55em;
+  font-size: clamp(12px, 1.35vh, 18px);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.4em 0.85em;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.mode .dot {
+  width: 0.6em; height: 0.6em; border-radius: 50%;
+  background: var(--muted);
+}
+.mode[data-live="true"] .dot { background: var(--good); }
+.mode[data-live="true"] { color: var(--ink); }
+.mode .src { color: var(--muted); font-weight: 400; letter-spacing: 0.02em; text-transform: none; }
+
+/* ---------------- question + caption ---------------- */
+
+.question {
+  font-size: clamp(24px, 4.4vh, 62px);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  min-height: 1.2em;
+}
+.question:empty::before { content: "Tap a question below"; color: var(--muted); }
+
+.caption {
+  font-size: clamp(14px, 1.9vh, 26px);
+  color: var(--ink-2);
+  min-height: 1.35em;
+  line-height: 1.35;
+}
+
+/* ---------------- the race ---------------- */
+
+.race {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: clamp(14px, 2vh, 30px) clamp(16px, 2vw, 34px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(12px, 2vh, 28px);
+  flex: 1 1 auto;
+  justify-content: center;
+  min-height: 0;
+}
+
+.lane { display: grid; grid-template-columns: 1fr auto; gap: 0.45em clamp(12px, 1.4vw, 26px); align-items: end; }
+
+.lane-head { display: flex; align-items: center; gap: 0.6em; flex-wrap: wrap; min-width: 0; }
+.swatch { width: 0.85em; height: 0.85em; border-radius: 3px; flex: none; }
+.lane[data-lane="cached"] .swatch { background: var(--cached); }
+.lane[data-lane="direct"] .swatch { background: var(--direct); }
+
+.lane-name {
+  font-size: clamp(15px, 2.05vh, 28px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.lane-sub {
+  font-size: clamp(12px, 1.5vh, 20px);
+  color: var(--muted);
+}
+
+.badge {
+  font-size: clamp(11px, 1.3vh, 17px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0.25em 0.7em;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.badge[data-state="hit"]  { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, transparent); }
+.badge[data-state="miss"] { color: var(--ink-2); }
+.badge[data-state="idle"] { opacity: 0; }
+
+.gpu-pill {
+  font-size: clamp(11px, 1.3vh, 17px);
+  color: var(--muted);
+  display: inline-flex; align-items: center; gap: 0.5em;
+}
+.gpu-pill .led {
+  width: 0.62em; height: 0.62em; border-radius: 50%;
+  background: var(--baseline);
+}
+.gpu-pill[data-on="true"] .led { background: var(--direct); animation: pulse 0.9s ease-in-out infinite; }
+.gpu-pill[data-on="cold"] .led { background: var(--baseline); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.28; } }
+
+/* value sits outside the bar end, right-aligned on a shared edge — a 6%
+   bar has no room for a tip label, and a fixed column keeps the two
+   lanes' numbers comparable at a glance. */
+.readout {
+  grid-row: span 2;
+  align-self: center;
+  text-align: right;
+  font-variant-numeric: tabular-nums;  /* ticking counter — stops digit jitter */
+  min-width: 4.6em;
+}
+.readout .ms {
+  display: block;
+  font-size: clamp(26px, 4.6vh, 68px);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.readout .unit { font-size: 0.42em; font-weight: 500; color: var(--muted); margin-left: 0.15em; }
+
+.track {
+  grid-column: 1;
+  position: relative;
+  height: clamp(26px, 4.6vh, 58px);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.fill {
+  position: absolute; inset: 0 auto 0 0;
+  width: 0;
+  border-radius: 0 6px 6px 0;   /* rounded data-end, square at the baseline */
+  will-change: width;
+}
+.lane[data-lane="cached"] .fill { background: var(--cached); }
+.lane[data-lane="direct"] .fill { background: var(--direct); }
+
+/* scale ticks — hairline, recessive, shared by both lanes */
+.ticks { position: absolute; inset: 0; pointer-events: none; }
+.tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--grid); }
+/* Mirrors the lane grid so the labels sit under the track, not under the
+   readout column — and each label is pinned to its own tick, not spread. */
+.scale-row { display: grid; grid-template-columns: 1fr auto; gap: 0 clamp(12px, 1.4vw, 26px); }
+.scale-labels {
+  grid-column: 1;
+  position: relative;
+  height: 1.3em;
+  font-size: clamp(10px, 1.2vh, 15px);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.scale-labels span { position: absolute; top: 0; transform: translateX(-50%); }
+.scale-labels span:first-child { transform: none; }
+.scale-spacer { min-width: 4.6em; }
+
+/* ---------------- verdict ---------------- */
+
+.verdict {
+  display: flex; align-items: baseline; gap: clamp(12px, 1.6vw, 30px);
+  flex-wrap: wrap;
+  min-height: clamp(38px, 6vh, 84px);
+  padding-bottom: clamp(4px, 0.9vh, 14px);
+}
+.hero {
+  font-size: clamp(38px, 7.4vh, 108px);
+  font-weight: 700;
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+}
+.hero:empty { display: none; }
+.verdict-note { font-size: clamp(14px, 1.9vh, 26px); color: var(--ink-2); }
+
+/* ---------------- presets ---------------- */
+
+.presets { display: flex; gap: clamp(8px, 0.8vw, 16px); flex-wrap: wrap; }
+.presets button {
+  font: inherit;
+  font-size: clamp(12px, 1.5vh, 20px);
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.62em 1.15em;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.presets button:hover:not(:disabled),
+.presets button:focus-visible { color: var(--ink); border-color: var(--cached); outline: none; }
+.presets button:disabled { opacity: 0.32; cursor: default; }
+
+/* ---------------- counters ---------------- */
+
+.counters {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: clamp(8px, 0.9vw, 18px);
+}
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: clamp(9px, 1.3vh, 18px) clamp(12px, 1.1vw, 20px);
+  min-width: 0;
+}
+.tile .label {
+  font-size: clamp(10px, 1.25vh, 15px);
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  display: block;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tile .value {
+  font-size: clamp(20px, 3.1vh, 44px);
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.tile .foot { font-size: clamp(9px, 1.1vh, 14px); color: var(--muted); }
+
+/* ---------------- receipts ---------------- */
+
+.receipts {
+  position: fixed; inset: 0;
+  background: rgba(5,5,5,0.93);
+  padding: clamp(20px, 4vh, 60px);
+  overflow: auto;
+  display: none;
+  z-index: 20;
+}
+.receipts[data-open="true"] { display: block; }
+.receipts h2 { font-size: clamp(18px, 2.6vh, 34px); margin: 0 0 0.6em; }
+.receipts pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(11px, 1.35vh, 16px);
+  line-height: 1.55;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1em 1.2em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0 0 1em;
+}
+.receipts .hint { color: var(--muted); font-size: clamp(11px, 1.4vh, 17px); }
+.receipts button {
+  font: inherit; font-size: clamp(12px, 1.5vh, 18px);
+  color: var(--ink-2); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.5em 1em; cursor: pointer; margin-right: 0.6em;
+}
+.receipts button:hover { color: var(--ink); border-color: var(--cached); }
+
+.kbd-hint {
+  position: fixed; right: clamp(12px, 1.4vw, 26px); bottom: clamp(10px, 1.2vh, 20px);
+  font-size: clamp(9px, 1.1vh, 13px); color: var(--muted); opacity: 0.55;
+}
+
+@media (max-width: 900px) {
+  .counters { grid-template-columns: repeat(2, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gpu-pill[data-on="true"] .led { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="stage">
+
+  <header>
+    <div class="brand">Zero-Waste Inference <span>· Akamai Cloud · LKE us-ord</span></div>
+    <div class="mode" id="mode" data-live="false">
+      <span class="dot"></span><span id="modeText">connecting</span>
+      <span class="src" id="modeSrc"></span>
+    </div>
+  </header>
+
+  <div class="question" id="question"></div>
+  <div class="caption" id="caption">Two identical requests. One path reuses work. One starts from scratch.</div>
+
+  <section class="race">
+    <div class="lane" data-lane="cached">
+      <div class="lane-head">
+        <span class="swatch"></span>
+        <span class="lane-name">Zero-waste path</span>
+        <span class="lane-sub">Fermyon &rarr; Valkey</span>
+        <span class="badge" id="badgeCached" data-state="idle">&mdash;</span>
+        <span class="gpu-pill" id="gpuCached" data-on="cold"><span class="led"></span>GPU untouched</span>
+      </div>
+      <div class="track">
+        <div class="fill" id="fillCached"></div>
+        <div class="ticks" data-ticks></div>
+      </div>
+      <div class="readout"><span class="ms" id="msCached">0</span><span class="unit">ms</span></div>
+    </div>
+
+    <div class="lane" data-lane="direct">
+      <div class="lane-head">
+        <span class="swatch"></span>
+        <span class="lane-name">Every request fresh</span>
+        <span class="lane-sub">straight to the GPU</span>
+        <span class="badge" data-state="idle">&mdash;</span>
+        <span class="gpu-pill" id="gpuDirect" data-on="cold"><span class="led"></span>GPU idle</span>
+      </div>
+      <div class="track">
+        <div class="fill" id="fillDirect"></div>
+        <div class="ticks" data-ticks></div>
+      </div>
+      <div class="readout"><span class="ms" id="msDirect">0</span><span class="unit">ms</span></div>
+    </div>
+
+    <div class="scale-row">
+      <div class="scale-labels" id="scaleLabels"></div>
+      <div class="scale-spacer"></div>
+    </div>
+  </section>
+
+  <div class="verdict">
+    <span class="hero" id="hero"></span>
+    <span class="verdict-note" id="verdictNote"></span>
+  </div>
+
+  <div class="presets" id="presets"></div>
+
+  <footer class="counters">
+    <div class="tile">
+      <span class="label">Questions answered</span>
+      <div class="value" id="cQuestions">0</div>
+      <div class="foot">at this booth</div>
+    </div>
+    <div class="tile">
+      <span class="label">Cache hits</span>
+      <div class="value" id="cHits">0</div>
+      <div class="foot" id="cHitRate">&mdash;</div>
+    </div>
+    <div class="tile">
+      <span class="label">GPU time avoided</span>
+      <div class="value" id="cGpu">0.0s</div>
+      <div class="foot">measured at concurrency 1</div>
+    </div>
+    <div class="tile">
+      <span class="label">Cost avoided</span>
+      <div class="value" id="cCost">$0.00</div>
+      <div class="foot">$0.96/GPU-hr &middot; 1M hits &asymp; $805 <em>projected</em></div>
+    </div>
+  </footer>
+
+</div>
+
+<aside class="receipts" id="receipts" aria-hidden="true">
+  <h2>Show me the receipts</h2>
+  <p class="hint" id="receiptsHint"></p>
+  <pre id="receiptsBody">No run yet.</pre>
+  <button id="btnReset">Reset booth counters</button>
+  <button id="btnCloseReceipts">Close (R)</button>
+</aside>
+
+<div class="kbd-hint">space run &middot; L live/replay &middot; R receipts &middot; F fullscreen</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ==================================================================
+ * Config
+ * ================================================================== */
+
+const RELAY       = location.origin.startsWith("http") ? location.origin : "http://localhost:8099";
+const SCALE_MAX   = 3600;    // ms of track width — fixed so both lanes share one scale
+const GPU_HOURLY  = 0.96;    // configs/rtx4000ada.yaml, g2-gpu-rtx4000a1-l
+const ACT_PAUSE   = 2300;    // ms to let Act 1's result land before Act 2
+const IDLE_ATTRACT= 20000;   // ms of no interaction before the attract loop runs
+const STORE_KEY   = "zwi-booth-counters-v1";
+
+const PRESETS = [
+  "What is prefix caching in LLMs?",
+  "Explain KV caching in one paragraph.",
+  "Why is GPU inference expensive?",
+  "What does Valkey do in this stack?",
+  "How does WebAssembly help at the edge?",
+  "Summarise zero-waste inference."
+];
+
+/* Measured fallback — phases/phase2-prefix-cache/results/phase2_cache_benchmark.json,
+ * run 2026-04-16 on akamai-lke-us-ord. Never synthetic.
+ *
+ * pass1 request_index 0 (8,173.23 ms) is deliberately excluded from the pool:
+ * it is the documented vLLM cold-start spike, not a representative miss, and
+ * replaying it in an attract loop would misstate typical MISS latency. */
+const REPLAY = {
+  source: "phase2_cache_benchmark.json · measured 2026-04-16",
+  miss:   [3047.36, 3025.81, 3115.79, 3072.74, 3068.98, 3033.40, 3037.63, 2819.41, 3091.06],
+  hit:    [220.53, 219.02, 219.25, 217.23, 212.98, 215.92, 204.73, 220.59, 215.79, 218.17],
+  direct: [3021.04, 3018.96, 3062.87, 3010.15, 3013.56, 3025.68, 2808.00, 3092.46, 3025.71, 3019.52]
+};
+
+/* ==================================================================
+ * State + DOM
+ * ================================================================== */
+
+const $ = id => document.getElementById(id);
+const el = {
+  mode: $("mode"), modeText: $("modeText"), modeSrc: $("modeSrc"),
+  question: $("question"), caption: $("caption"),
+  fillCached: $("fillCached"), fillDirect: $("fillDirect"),
+  msCached: $("msCached"), msDirect: $("msDirect"),
+  badgeCached: $("badgeCached"),
+  gpuCached: $("gpuCached"), gpuDirect: $("gpuDirect"),
+  hero: $("hero"), verdictNote: $("verdictNote"),
+  presets: $("presets"),
+  cQuestions: $("cQuestions"), cHits: $("cHits"), cHitRate: $("cHitRate"),
+  cGpu: $("cGpu"), cCost: $("cCost"),
+  receipts: $("receipts"), receiptsBody: $("receiptsBody"), receiptsHint: $("receiptsHint"),
+  btnReset: $("btnReset"), btnCloseReceipts: $("btnCloseReceipts")
+};
+
+let live = false;
+let running = false;
+let presetIndex = 0;
+let idleTimer = null;
+let lastReceipt = null;
+
+let counters = loadCounters();
+
+/* ==================================================================
+ * Utilities
+ * ================================================================== */
+
+const sleep  = ms => new Promise(r => setTimeout(r, ms));
+const pick   = arr => arr[Math.floor(Math.random() * arr.length)];
+const clamp01 = v => Math.max(0, Math.min(1, v));
+
+function loadCounters() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (_) { /* private mode / disabled storage — counters just won't persist */ }
+  return { questions: 0, requests: 0, hits: 0, gpuSeconds: 0 };
+}
+
+function saveCounters() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(counters)); } catch (_) {}
+}
+
+function renderCounters() {
+  el.cQuestions.textContent = counters.questions.toLocaleString();
+  el.cHits.textContent      = counters.hits.toLocaleString();
+  el.cHitRate.textContent   = counters.requests
+    ? `${Math.round(counters.hits / counters.requests * 100)}% of ${counters.requests.toLocaleString()} requests`
+    : "—";
+  const s = counters.gpuSeconds;
+  el.cGpu.textContent = s >= 60
+    ? `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s`
+    : `${s.toFixed(1)}s`;
+  el.cCost.textContent = `$${(s * GPU_HOURLY / 3600).toFixed(4)}`;
+}
+
+function drawTicks() {
+  document.querySelectorAll("[data-ticks]").forEach(box => {
+    box.innerHTML = "";
+    for (let sec = 1; sec <= 3; sec++) {
+      const t = document.createElement("div");
+      t.className = "tick";
+      t.style.left = `${(sec * 1000 / SCALE_MAX) * 100}%`;
+      box.appendChild(t);
+    }
+  });
+  // Labels are pinned to the same offsets as the ticks they annotate.
+  const labels = document.getElementById("scaleLabels");
+  labels.innerHTML = "";
+  [0, 1, 2, 3].forEach(sec => {
+    const s = document.createElement("span");
+    s.textContent = sec === 0 ? "0" : `${sec}s`;
+    s.style.left = `${(sec * 1000 / SCALE_MAX) * 100}%`;
+    labels.appendChild(s);
+  });
+}
+
+function resetLanes() {
+  el.fillCached.style.width = "0";
+  el.fillDirect.style.width = "0";
+  el.msCached.textContent = "0";
+  el.msDirect.textContent = "0";
+  el.badgeCached.dataset.state = "idle";
+  el.badgeCached.textContent = "—";
+  el.gpuCached.dataset.on = "cold";
+  el.gpuCached.lastChild.nodeValue = "GPU untouched";
+  el.gpuDirect.dataset.on = "cold";
+  el.gpuDirect.lastChild.nodeValue = "GPU idle";
+  el.hero.textContent = "";
+  el.verdictNote.textContent = "";
+}
+
+/* ==================================================================
+ * Lane runner — animates from a local clock, then snaps to the
+ * authoritative upstream latency when the request resolves.
+ * ================================================================== */
+
+function animateLane(fillEl, msEl, stop) {
+  const t0 = performance.now();
+  return new Promise(resolve => {
+    function frame() {
+      const elapsed = performance.now() - t0;
+      fillEl.style.width = `${clamp01(elapsed / SCALE_MAX) * 100}%`;
+      msEl.textContent = Math.round(elapsed).toLocaleString();
+      if (stop.done) { resolve(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+async function runLane(kind, prompt, nonce, fillEl, msEl) {
+  const stop = { done: false };
+  const anim = animateLane(fillEl, msEl, stop);
+  let result;
+
+  if (live) {
+    try {
+      const res = await fetch(`${RELAY}/race/${kind}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt, nonce })
+      });
+      result = await res.json();
+    } catch (err) {
+      result = { ok: false, error: String(err), latency_ms: 0 };
+    }
+    if (!result.ok) {           // upstream died mid-show — fall back, keep the booth alive
+      setLive(false, "upstream unreachable");
+      result = replayResult(kind, nonce);
+      await sleep(result.latency_ms);
+    }
+  } else {
+    result = replayResult(kind, nonce);
+    await sleep(result.latency_ms);
+  }
+
+  stop.done = true;
+  await anim;
+
+  // Snap to the authoritative number.
+  fillEl.style.width = `${clamp01(result.latency_ms / SCALE_MAX) * 100}%`;
+  msEl.textContent = Math.round(result.latency_ms).toLocaleString();
+  return result;
+}
+
+/* In replay mode the nonce ledger stands in for Valkey: a nonce we have
+ * already raced once is "warm", so lane 1 draws from the measured HIT pool. */
+const seenNonces = new Set();
+
+function replayResult(kind, nonce) {
+  if (kind === "direct") {
+    return { ok: true, replay: true, latency_ms: pick(REPLAY.direct), x_cache: "" };
+  }
+  const warm = seenNonces.has(nonce);
+  return {
+    ok: true, replay: true,
+    latency_ms: warm ? pick(REPLAY.hit) : pick(REPLAY.miss),
+    x_cache: warm ? "HIT" : "MISS"
+  };
+}
+
+/* ==================================================================
+ * The two-act race
+ * ================================================================== */
+
+async function runRace(prompt) {
+  if (running) return;
+  running = true;
+  setPresetsEnabled(false);
+  clearTimeout(idleTimer);
+
+  const nonce = (crypto.randomUUID?.() || String(Math.random()).slice(2));
+  el.question.textContent = prompt;
+  resetLanes();
+
+  /* ---- Act 1: nobody has asked this before ---- */
+  el.caption.textContent = "First time anyone has asked this. There is nothing to reuse yet.";
+  el.gpuCached.dataset.on = "true"; el.gpuCached.lastChild.nodeValue = "GPU working";
+  el.gpuDirect.dataset.on = "true"; el.gpuDirect.lastChild.nodeValue = "GPU working";
+
+  const [coldCached, coldDirect] = await Promise.all([
+    runLane("cached", prompt, nonce, el.fillCached, el.msCached),
+    runLane("direct", prompt, nonce, el.fillDirect, el.msDirect)
+  ]);
+  seenNonces.add(nonce);
+
+  el.gpuCached.dataset.on = "cold"; el.gpuCached.lastChild.nodeValue = "GPU worked";
+  el.gpuDirect.dataset.on = "cold"; el.gpuDirect.lastChild.nodeValue = "GPU worked";
+  el.badgeCached.dataset.state = "miss";
+  el.badgeCached.textContent = coldCached.x_cache || "MISS";
+  el.caption.textContent = "Both paths paid full price. That is the honest cost of a new question.";
+  el.verdictNote.textContent = "No reuse available — the cache had never seen this.";
+
+  await sleep(ACT_PAUSE);
+
+  /* ---- Act 2: same question, again ---- */
+  resetLanes();
+  el.caption.textContent = "Now somebody asks the very same question…";
+  el.gpuDirect.dataset.on = "true"; el.gpuDirect.lastChild.nodeValue = "GPU working";
+
+  const [warmCached, warmDirect] = await Promise.all([
+    runLane("cached", prompt, nonce, el.fillCached, el.msCached),
+    runLane("direct", prompt, nonce, el.fillDirect, el.msDirect)
+  ]);
+
+  el.gpuDirect.dataset.on = "cold"; el.gpuDirect.lastChild.nodeValue = "GPU worked";
+  const isHit = (warmCached.x_cache || "").toUpperCase() === "HIT";
+  el.badgeCached.dataset.state = isHit ? "hit" : "miss";
+  el.badgeCached.textContent = warmCached.x_cache || "MISS";
+
+  if (isHit) {
+    el.gpuCached.dataset.on = "cold";
+    el.gpuCached.lastChild.nodeValue = "GPU never woke up";
+    const ratio = warmDirect.latency_ms / Math.max(1, warmCached.latency_ms);
+    const saved = warmDirect.latency_ms / 1000;
+    el.hero.textContent = `${ratio.toFixed(1)}× faster`;
+    el.verdictNote.textContent =
+      `${Math.round(warmDirect.latency_ms - warmCached.latency_ms).toLocaleString()} ms saved · ` +
+      `${saved.toFixed(1)} GPU-seconds not spent`;
+    el.caption.textContent = "Same answer, same model — and the GPU never woke up.";
+    counters.hits += 1;
+    counters.gpuSeconds += saved;
+  } else {
+    el.caption.textContent = "No hit this time — the entry had expired or the write did not land.";
+    el.verdictNote.textContent = "Reported exactly as measured.";
+  }
+
+  counters.questions += 1;
+  counters.requests  += 2;       // two trips through the front door per race
+  saveCounters();
+  renderCounters();
+
+  lastReceipt = {
+    prompt, nonce,
+    mode: live ? "LIVE" : `REPLAY · ${REPLAY.source}`,
+    act1: { cached: coldCached, direct: coldDirect },
+    act2: { cached: warmCached, direct: warmDirect }
+  };
+
+  running = false;
+  setPresetsEnabled(true);
+  scheduleAttract();
+}
+
+/* ==================================================================
+ * Mode
+ * ================================================================== */
+
+function setLive(isLive, note) {
+  live = isLive;
+  el.mode.dataset.live = String(isLive);
+  el.modeText.textContent = isLive ? "live" : "replay";
+  el.modeSrc.textContent = isLive
+    ? "· cluster"
+    : `· ${note || REPLAY.source}`;
+}
+
+async function probeRelay() {
+  try {
+    const res = await fetch(`${RELAY}/health`, { cache: "no-store" });
+    const body = await res.json();
+    setLive(Boolean(body.ok && body.live));
+  } catch (_) {
+    setLive(false);
+  }
+}
+
+/* ==================================================================
+ * Presets, attract loop, keyboard
+ * ================================================================== */
+
+function buildPresets() {
+  PRESETS.forEach(p => {
+    const b = document.createElement("button");
+    b.textContent = p;
+    b.addEventListener("click", () => runRace(p));
+    el.presets.appendChild(b);
+  });
+}
+
+function setPresetsEnabled(on) {
+  el.presets.querySelectorAll("button").forEach(b => { b.disabled = !on; });
+}
+
+function scheduleAttract() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (!running) runRace(PRESETS[presetIndex++ % PRESETS.length]);
+  }, IDLE_ATTRACT);
+}
+
+function toggleReceipts(force) {
+  const open = force ?? el.receipts.dataset.open !== "true";
+  el.receipts.dataset.open = String(open);
+  el.receipts.setAttribute("aria-hidden", String(!open));
+  if (open) {
+    el.receiptsHint.textContent = live
+      ? `Live against ${RELAY} — the relay proxies both lanes and reports upstream timings.`
+      : `Replaying measured data from ${REPLAY.source}. Nothing here is synthetic; the cold-start outlier is excluded.`;
+    el.receiptsBody.textContent = lastReceipt
+      ? JSON.stringify(lastReceipt, null, 2)
+      : "No run yet. Press space or tap a question.";
+  }
+}
+
+document.addEventListener("keydown", ev => {
+  const k = ev.key.toLowerCase();
+  if (k === " " || ev.code === "Space") { ev.preventDefault(); if (!running) runRace(PRESETS[presetIndex++ % PRESETS.length]); }
+  else if (k === "l") { setLive(!live); }
+  else if (k === "r") { toggleReceipts(); }
+  else if (k === "escape") { toggleReceipts(false); }
+  else if (k === "f") {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen?.();
+  }
+});
+
+el.btnCloseReceipts.addEventListener("click", () => toggleReceipts(false));
+el.btnReset.addEventListener("click", () => {
+  counters = { questions: 0, requests: 0, hits: 0, gpuSeconds: 0 };
+  saveCounters();
+  renderCounters();
+});
+
+/* ==================================================================
+ * Boot
+ * ================================================================== */
+
+drawTicks();
+buildPresets();
+renderCounters();
+probeRelay();
+setInterval(probeRelay, 15000);   // recover automatically if the tunnel comes back
+scheduleAttract();
+window.addEventListener("resize", drawTicks);
+
+})();
+</script>
+</body>
+</html>
