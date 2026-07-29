@@ -14,20 +14,56 @@ demo/
 
 ---
 
-## Run it
+## Quick start
 
-### Replay only (no cluster, no GPU, no network)
+**Prerequisites:** `git` and `python3`. That is the whole list — the relay is
+Python standard library only, so there is no `pip install` and no build step.
+Any Python 3.7 or newer works; macOS and Linux already ship one.
 
 ```bash
+git clone https://github.com/JGinSJ/zero-waste-inference.git
+cd zero-waste-inference
 python3 demo/relay.py --replay-only
-# open http://localhost:8099
 ```
 
-The page replays measured timings from
-`phases/phase2-prefix-cache/results/phase2_cache_benchmark.json`. Use this to
-rehearse the talk track, or on a plane.
+Open **http://localhost:8099** and press `F` for fullscreen.
 
-### Live against the cluster
+| Key | Does |
+|---|---|
+| `space` | run a race |
+| `F` | fullscreen |
+| `R` | receipts — raw JSON, response headers, timings |
+| `L` | force live / replay |
+| `Esc` | close receipts |
+
+Tap any question button to run that one. Leave it alone for 20 seconds and it
+demos itself, so the screen is never static.
+
+**What you are looking at:** two identical requests race each other — one
+through the cache, one straight to the GPU. The first ask is a cold miss and
+both take about three seconds. Ask the same thing again and the cached lane
+returns in ~218 ms while the GPU lane still grinds. The numbers are real,
+replayed from a measured run on Akamai LKE, not simulated.
+
+### Notes for anyone running this cold
+
+- **Use `--replay-only`.** Live mode needs `kubectl` and a kubeconfig for the
+  LKE cluster. Without the flag the page probes for a cluster, fails, and falls
+  back to replay anyway — same demo, but with a misleading "upstream
+  unreachable" badge on the way there.
+- **Port 8099 already taken?** `--port 8123` moves it. The page follows
+  automatically; it derives the relay endpoint from its own origin.
+- **The relay binds `0.0.0.0`, not localhost.** That is deliberate — you can
+  point a second screen or a tablet at the booth laptop's IP. It also means
+  anyone on the same network can load the page. Fine at a stand, worth knowing
+  on café wifi. Change the bind address in `relay.py` if you would rather it
+  stayed private.
+- **Browser:** Safari 16.2+ or Chrome 111+ (the page uses `color-mix()` and
+  `crypto.randomUUID()`). Serve it through the relay rather than opening the
+  `.html` off disk — `randomUUID` needs a secure context, and `http://localhost`
+  counts as one.
+
+## Running it live against the cluster
 
 ```bash
 # Terminal 1 + 2 — reach the cluster
@@ -39,7 +75,9 @@ python3 demo/relay.py
 # open http://localhost:8099
 ```
 
-Python 3.11+ standard library only. No pip install, no build step.
+The mode badge in the top right reads **LIVE** when the relay can reach the
+cluster and **REPLAY** when it cannot. It re-probes every 15 seconds, so a
+dropped tunnel downgrades gracefully mid-show and recovers on its own.
 
 ---
 

@@ -19,7 +19,7 @@ port-forwards (or the tunnel), proxies each lane, times it server-side, and
 hands the page a clean JSON result with permissive CORS. It also serves
 `booth-race.html` itself, so the demo runs from http:// rather than file://.
 
-No third-party dependencies — Python 3.11 standard library only.
+No third-party dependencies — standard library only, Python 3.7 or newer.
 
 Usage
 -----
