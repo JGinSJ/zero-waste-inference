@@ -305,6 +305,10 @@ def main() -> int:
         print(f"  vllm     {VLLM_URL}")
         print(f"  model    {MODEL_NAME}")
     print("\n  Ctrl-C to stop.\n")
+    # Flush explicitly: when stdout is redirected to a file rather than a tty,
+    # Python block-buffers it and the banner would not appear until exit —
+    # which looks exactly like a hang.
+    sys.stdout.flush()
 
     server = ThreadingHTTPServer(("0.0.0.0", args.port), RelayHandler)
     try:
