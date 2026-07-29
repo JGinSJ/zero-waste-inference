@@ -485,6 +485,7 @@ const el = {
 };
 
 let live = false;
+let relayIsReplayOnly = false;   // latched from /health; see probeRelay()
 let running = false;
 let presetIndex = 0;
 let idleTimer = null;
@@ -731,6 +732,10 @@ async function probeRelay() {
   try {
     const res = await fetch(`${RELAY}/health`, { cache: "no-store" });
     const body = await res.json();
+    // A relay started with --replay-only reports live:false. Latch that, so the
+    // LIVE badge can never sit above numbers that came from the measured pool —
+    // see the `L` key handler, which refuses to override it.
+    relayIsReplayOnly = Boolean(body.ok) && body.live === false;
     setLive(Boolean(body.ok && body.live));
   } catch (_) {
     setLive(false);
@@ -778,7 +783,15 @@ function toggleReceipts(force) {
 document.addEventListener("keydown", ev => {
   const k = ev.key.toLowerCase();
   if (k === " " || ev.code === "Space") { ev.preventDefault(); if (!running) runRace(PRESETS[presetIndex++ % PRESETS.length]); }
-  else if (k === "l") { setLive(!live); }
+  else if (k === "l") {
+    // Refuse when the relay is replay-only: the badge must never read LIVE
+    // while every number on screen comes from the measured-data pool.
+    if (relayIsReplayOnly) {
+      if (!running) el.caption.textContent = "Relay is in replay-only mode — measured data, no cluster.";
+    } else {
+      setLive(!live);
+    }
+  }
   else if (k === "r") { toggleReceipts(); }
   else if (k === "escape") { toggleReceipts(false); }
   else if (k === "f") {

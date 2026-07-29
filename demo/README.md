@@ -33,7 +33,6 @@ Open **http://localhost:8099** and press `F` for fullscreen.
 | `space` | run a race |
 | `F` | fullscreen |
 | `R` | receipts — raw JSON, response headers, timings |
-| `L` | force live / replay |
 | `Esc` | close receipts |
 
 Tap any question button to run that one. Leave it alone for 20 seconds and it
@@ -42,15 +41,21 @@ demos itself, so the screen is never static.
 **What you are looking at:** two identical requests race each other — one
 through the cache, one straight to the GPU. The first ask is a cold miss and
 both take about three seconds. Ask the same thing again and the cached lane
-returns in ~218 ms while the GPU lane still grinds. The numbers are real,
-replayed from a measured run on Akamai LKE, not simulated.
+returns in ~218 ms while the GPU lane still grinds.
+
+**The demo replays measured data. It does not call a live cluster.** Every
+latency on screen is a real sample from a benchmark run on Akamai LKE on
+2026-04-16 — nothing is simulated, and nothing is generated at the booth. The
+badge in the top right says `REPLAY` with the source file and date, permanently.
+That is the design, not a fallback: an expo hall is the last place to bet a
+demo on network connectivity, and replayed measurements make exactly the same
+point as a live call while being immune to the venue's wifi.
+
+So the demo needs **no network, no cluster, no GPU, and no credentials.** It
+runs identically on a plane.
 
 ### Notes for anyone running this cold
 
-- **Use `--replay-only`.** Live mode needs `kubectl` and a kubeconfig for the
-  LKE cluster. Without the flag the page probes for a cluster, fails, and falls
-  back to replay anyway — same demo, but with a misleading "upstream
-  unreachable" badge on the way there.
 - **Port 8099 already taken?** `--port 8123` moves it. The page follows
   automatically; it derives the relay endpoint from its own origin.
 - **The relay binds `0.0.0.0`, not localhost.** That is deliberate — you can
@@ -63,45 +68,20 @@ replayed from a measured run on Akamai LKE, not simulated.
   `.html` off disk — `randomUUID` needs a secure context, and `http://localhost`
   counts as one.
 
-## Running it live against the cluster
-
-```bash
-# Terminal 1 + 2 — reach the cluster
-kubectl port-forward -n inference svc/fermyon-svc 8082:8082
-kubectl port-forward -n inference svc/vllm-svc    8000:8000
-
-# Terminal 3 — the relay
-python3 demo/relay.py
-# open http://localhost:8099
-```
-
-The mode badge in the top right reads **LIVE** when the relay can reach the
-cluster and **REPLAY** when it cannot. It re-probes every 15 seconds, so a
-dropped tunnel downgrades gracefully mid-show and recovers on its own.
-
 ---
 
-## Why the relay exists
+## Why there is a relay at all
 
-The page cannot call the cluster directly. Neither the Fermyon proxy nor vLLM
-sends CORS headers, so the browser blocks the response; and even with
-`Access-Control-Allow-Origin`, a custom header like `X-Cache` stays invisible
-without `Access-Control-Expose-Headers`. Since `X-Cache: HIT|MISS` **is** the
-proof, the relay proxies each lane, times it server-side, and hands the page a
-clean JSON result. It also serves the page itself, so the demo runs over
-`http://` rather than `file://`.
+For the booth, the relay does one job: serve the page over `http://` instead of
+`file://`. That matters more than it sounds — `crypto.randomUUID()` needs a
+secure context, and `http://localhost` qualifies while `file://` does not.
 
-Point it somewhere else with environment variables:
-
-| Variable | Default |
-|---|---|
-| `FERMYON_URL` | `http://localhost:8082` |
-| `VLLM_URL` | `http://localhost:8000` |
-| `MODEL_NAME` | `mistralai/Mistral-7B-Instruct-v0.2` |
-| `MAX_TOKENS` | `64` |
-| `RELAY_PORT` | `8099` |
-| `KEEPALIVE_SECONDS` | `60` (0 disables) |
-| `UPSTREAM_TIMEOUT` | `30` |
+The relay also contains a live proxy path, which is not used at the booth and is
+documented in `relay.py` rather than here. Short version: a browser cannot read
+`X-Cache: HIT|MISS` off the cluster directly, because neither the Fermyon proxy
+nor vLLM sends CORS headers — so when the data is regenerated, the relay
+proxies each lane and times it server-side. That path is how
+`phase2_cache_benchmark.json` gets refreshed, not how the booth runs.
 
 ---
 
@@ -131,10 +111,13 @@ of hand.
 | Key | Action |
 |---|---|
 | `space` | run the next preset question |
-| `L` | force live / replay |
 | `R` | receipts panel (raw JSON, both acts, headers, nonce) |
 | `F` | fullscreen |
 | `Esc` | close receipts |
+
+(`L` toggles live/replay during development. When the relay runs
+`--replay-only` the key is refused, so the badge can never read `LIVE` above
+replayed numbers.)
 
 Tapping any preset button runs that question. After 20 s idle the attract loop
 runs a race on its own, so the screen is never static while you are talking to
@@ -147,24 +130,30 @@ sleep — reset them from the receipts panel at the start of each show day.
 
 ## Show-day checklist
 
-1. **Warm the model before doors open.** The measured cold-start spike is
-   8,173 ms on the first inference after pod readiness. The relay's keepalive
-   pings vLLM every 60 s; start it early and leave it running.
-2. **Do not trust show wifi.** Prefer a tunnel (WireGuard/Tailscale) over
-   `kubectl port-forward` on conference networks. If the upstream dies
-   mid-race, the page falls back to replay automatically, re-badges itself, and
-   keeps running — it re-probes every 15 s and flips back to live on its own.
-3. **Scale down overnight** — see `docs/cluster-startup.md`. Two Ada nodes
-   idling through a three-day show is real money.
-4. **Fullscreen (`F`) and check from ten feet.** Everything is sized in `vh`/`vw`
+1. **Nothing to warm up, nothing to connect.** No cluster, no port-forwards, no
+   credentials, no wifi. Start the relay, open the page, done. If the venue
+   network is down, or you never joined it, the demo does not notice.
+2. **Reset the counters.** Receipts panel → *Reset booth counters*. They persist
+   in `localStorage`, so yesterday's totals survive overnight unless you clear
+   them.
+3. **Fullscreen (`F`) and check from ten feet.** Everything is sized in `vh`/`vw`
    units; the type should be readable from across the aisle.
+4. **Run one race before doors open** to confirm the display resolution looks
+   right — the layout adapts, but you want to see it on the actual screen.
 5. Have the receipts panel ready. The skeptical engineer is your best lead, and
-   `X-Cache: HIT` plus the raw response body is what wins them.
+   the raw JSON with `X-Cache: HIT` is what wins them.
+6. **Say it replays measured data**, ideally before anyone asks. It costs a
+   sentence, it is on the screen anyway, and it is a better story than pretending
+   a booth laptop is talking to Chicago.
 
 ---
 
 ## Honesty notes (these are load-bearing)
 
+- **The booth demo replays measured data, and the screen says so.** The `REPLAY`
+  badge carries the source file and the measurement date at all times. Nothing
+  here claims to be a live inference call, and the `L` key cannot be used to
+  make it look like one.
 - **The cold-start outlier is excluded from replay.** The 8,173 ms first request
   in `pass1_cold` is a documented vLLM cold start, not a representative miss;
   replaying it in a loop would misstate typical MISS latency. The other nine
